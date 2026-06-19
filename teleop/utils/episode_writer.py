@@ -11,7 +11,7 @@ import logging_mp
 logger_mp = logging_mp.get_logger(__name__)
 
 class EpisodeWriter():
-    def __init__(self, task_dir, frequency=30, image_size=[640, 480], rerun_log = True):
+    def __init__(self, task_dir, frequency=30, image_size=[640, 480], rerun_log = True, show_tactile=False):
         """
         image_size: [width, height]
         """
@@ -19,11 +19,12 @@ class EpisodeWriter():
         self.task_dir = task_dir
         self.frequency = frequency
         self.image_size = image_size
+        self.show_tactile = show_tactile
 
         self.rerun_log = rerun_log
         if self.rerun_log:
             logger_mp.info("==> RerunLogger initializing...\n")
-            self.rerun_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit = "300MB")
+            self.rerun_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit = "300MB", show_tactile = show_tactile)
             logger_mp.info("==> RerunLogger initializing ok.\n")
         
         self.data = {}
@@ -46,8 +47,9 @@ class EpisodeWriter():
         self.item_data_queue = Queue(-1)
         self.stop_worker = False
         self.need_save = False  # Flag to indicate when save_episode is triggered
-        self.worker_thread = Thread(target=self.process_queue)
-        self.worker_thread.start()
+        #self.worker_thread = Thread(target=self.process_queue)
+        #self.worker_thread.start()
+        self.worker_thread = None
 
         logger_mp.info("==> EpisodeWriter initialized successfully.\n")
 
@@ -66,20 +68,49 @@ class EpisodeWriter():
                     "right_ee": [],
                     "body":       [],
                 },
-
-                "tactile_names": {
-                    "left_ee": [],
-                    "right_ee": [],
-                }, 
+        #        "tactile_names": {
+        #            "left_ee": [
+        #                "fingerone_tip_touch", "fingerone_top_touch", "fingerone_palm_touch",
+        #                "fingertwo_tip_touch", "fingertwo_top_touch", "fingertwo_palm_touch", 
+        #                "fingerthree_tip_touch", "fingerthree_top_touch", "fingerthree_palm_touch",
+        #                "fingerfour_tip_touch", "fingerfour_top_touch", "fingerfour_palm_touch",
+        #                "fingerfive_tip_touch", "fingerfive_top_touch", "fingerfive_middle_touch", "fingerfive_palm_touch",
+        #                "palm_touch"
+        #            ],
+        #            "right_ee": [
+        #                "fingerone_tip_touch", "fingerone_top_touch", "fingerone_palm_touch",
+        #                "fingertwo_tip_touch", "fingertwo_top_touch", "fingertwo_palm_touch",
+        #                "fingerthree_tip_touch", "fingerthree_top_touch", "fingerthree_palm_touch", 
+        #                "fingerfour_tip_touch", "fingerfour_top_touch", "fingerfour_palm_touch",
+        #                "fingerfive_tip_touch", "fingerfive_top_touch", "fingerfive_middle_touch", "fingerfive_palm_touch",
+        #                "palm_touch"
+        #            ],
+        #        }, 
                 "sim_state": ""
             }
+
     def text_desc(self):
         self.text = {
-            "goal": "Pick up the red cup on the table.",
-            "desc": "Pick up the cup from the table and place it in another position. The operation should be smooth and the water in the cup should not spill out",
-            "steps":"step1: searching for cups. step2: go to the target location. step3: pick up the cup",
-        }
+            #"goal": "pick up the apple and place it in the blue basket.", # task1-1
+            #"goal": "pick up the tomato and place it in the blue basket.", # task1-2
+            #"goal": "pick up the peach and place it in the blue basket.", # task1-3
+            #"goal": "pick up the potato and place it in the red basket.", # task1-4
+            #"goal": "pick up the sweet potato and place it in the red basket.", # task1-4
+            #"goal": "pick up the bell pepper and place it in the red basket.", # task1-6
 
+            #"goal": "wipe the induction.", # task2-1
+            #"goal": "wipe the table.", # task2-2
+
+            "goal": "pick up the pot and place it on the induction.", # task3-1
+            #"goal": "pick up the pot and place it on the table.", # task3-2
+
+            #"goal": "pick up the potato and place it in the pot.", # task-4-1
+            #"goal": "pick up the bell pepper and place it in the pot.", # task-4-2
+            #"goal": "pick up the sweat potato and place it in the pot.", # task-4-3
+            
+            "desc": "",
+            "steps":"",
+        }
  
     def create_episode(self):
         """
@@ -102,16 +133,21 @@ class EpisodeWriter():
         self.color_dir = os.path.join(self.episode_dir, 'colors')
         self.depth_dir = os.path.join(self.episode_dir, 'depths')
         self.audio_dir = os.path.join(self.episode_dir, 'audios')
+        self.tactile_dir = os.path.join(self.episode_dir, 'tactiles')  # Tactile 데이터 저장 디렉토리 추가
         self.json_path = os.path.join(self.episode_dir, 'data.json')
+        
         os.makedirs(self.episode_dir, exist_ok=True)
         os.makedirs(self.color_dir, exist_ok=True)
         os.makedirs(self.depth_dir, exist_ok=True)
         os.makedirs(self.audio_dir, exist_ok=True)
+        os.makedirs(self.tactile_dir, exist_ok=True)  # Tactile 디렉토리 생성
+        
         if self.rerun_log:
-            self.online_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit="300MB")
+            self.online_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit="300MB", show_tactile=self.show_tactile)
 
         self.is_available = False  # After the episode is created, the class is marked as unavailable until the episode is successfully saved
         logger_mp.info(f"==> New episode created: {self.episode_dir}")
+        self.start_worker()  # Start the worker thread when a new episode is created    
         return True  # Return True if the episode is successfully created
         
     def add_item(self, colors, depths=None, states=None, actions=None, tactiles=None, audios=None, sim_state=None):
@@ -128,6 +164,11 @@ class EpisodeWriter():
             'audios': audios,
             'sim_state': sim_state,
         }
+        # 디버깅: tactile 데이터 확인
+        # if tactiles is not None:
+        #     if self.item_id % 100 == 0:  # 100번마다 출력
+        #        logger_mp.info(f"[EpisodeWriter] Item {self.item_id} - Tactile - L: {tactiles}, R: ")
+        
         # Enqueue the item data
         self.item_data_queue.put(item_data)
 
@@ -139,7 +180,7 @@ class EpisodeWriter():
                 try:
                     self._process_item_data(item_data)
                 except Exception as e:
-                    logger_mp.info(f"Error processing item_data (idx={item_data['idx']}): {e}")
+                    logger_mp.error(f"Error processing item_data (idx={item_data['idx']}): {e}")
                 self.item_data_queue.task_done()
             except Empty:
                 pass
@@ -153,13 +194,14 @@ class EpisodeWriter():
         colors = item_data.get('colors', {})
         depths = item_data.get('depths', {})
         audios = item_data.get('audios', {})
+        tactiles = item_data.get('tactiles', {})  # Tactile 데이터 가져오기
 
         # Save images
         if colors:
             for idx_color, (color_key, color) in enumerate(colors.items()):
                 color_name = f'{str(idx).zfill(6)}_{color_key}.jpg'
                 if not cv2.imwrite(os.path.join(self.color_dir, color_name), color):
-                    logger_mp.info(f"Failed to save color image.")
+                    logger_mp.warning(f"Failed to save color image.")
                 item_data['colors'][color_key] = os.path.join('colors', color_name)
 
         # Save depths
@@ -167,7 +209,7 @@ class EpisodeWriter():
             for idx_depth, (depth_key, depth) in enumerate(depths.items()):
                 depth_name = f'{str(idx).zfill(6)}_{depth_key}.jpg'
                 if not cv2.imwrite(os.path.join(self.depth_dir, depth_name), depth):
-                    logger_mp.info(f"Failed to save depth image.")
+                    logger_mp.warning(f"Failed to save depth image.")
                 item_data['depths'][depth_key] = os.path.join('depths', depth_name)
 
         # Save audios
@@ -177,13 +219,38 @@ class EpisodeWriter():
                 np.save(os.path.join(self.audio_dir, audio_name), audio.astype(np.int16))
                 item_data['audios'][mic] = os.path.join('audios', audio_name)
 
+        # Save tactiles - 새로 추가된 부분
+        if tactiles:
+           try:
+               for hand, tactile_data in tactiles.items():
+                   if tactile_data and len(tactile_data) > 0:  # 빈 데이터가 아닌 경우만 저장
+                       tactile_name = f'tactile_{str(idx).zfill(6)}_{hand}.npy'
+                       tactile_array = np.array(tactile_data, dtype=np.float32)
+                       np.save(os.path.join(self.tactile_dir, tactile_name), tactile_array)
+                        
+                       # 파일 경로를 item_data에 저장
+                    #    if 'tactiles' not in item_data:
+                    #        item_data['tactiles'] = {}
+                    #    item_data['tactiles'][hand] = os.path.join('tactiles', tactile_name)
+                    #    item_data['tactiles'][hand+'_value'] = tactile_array
+                        
+                       # 디버깅: 저장된 tactile 데이터 확인
+                       #if idx % 100 == 0:
+                       #    logger_mp.info(f"[EpisodeWriter] Saved tactile {hand} - Shape: {tactile_array.shape}, Sum: {np.sum(tactile_array):.2f}")
+                   else:
+                       logger_mp.warning(f"[EpisodeWriter] Empty tactile data for {hand} at idx {idx}")
+                       
+           except Exception as e:
+               logger_mp.error(f"[EpisodeWriter] Error saving tactile data at idx {idx}: {e}")
+
         # Update episode data
         self.episode_data.append(item_data)
 
         # Log data if necessary
         if self.rerun_log:
             curent_record_time = time.time()
-            logger_mp.info(f"==> episode_id:{self.episode_id}  item_id:{idx}  current_time:{curent_record_time}")
+            #if idx % 100 == 0:  # 로그 빈도 조정
+            #    logger_mp.info(f"==> episode_id:{self.episode_id}  item_id:{idx}  current_time:{curent_record_time}")
             self.rerun_logger.log_item_data(item_data)
 
     def save_episode(self):
@@ -200,6 +267,26 @@ class EpisodeWriter():
         self.data['info'] = self.info
         self.data['text'] = self.text
         self.data['data'] = self.episode_data
+        
+        # Tactile 데이터 통계 출력
+        #if self.episode_data:
+        #    tactile_count = 0
+        #    total_tactile_sum = 0
+         #   for item in self.episode_data:
+         #       if item.get('tactiles'):
+         #           tactile_count += 1
+         #           for hand, tactile_path in item['tactiles'].items():
+         #               try:
+           #                 # 저장된 파일에서 데이터 읽어서 확인
+         #                   full_path = os.path.join(self.episode_dir, tactile_path)
+         #                   if os.path.exists(full_path):
+         #                       tactile_data = np.load(full_path)
+         #                       total_tactile_sum += np.sum(tactile_data)
+         #               except Exception as e:
+         #                   logger_mp.warning(f"Error reading saved tactile file {tactile_path}: {e}")
+         #   
+         #   logger_mp.info(f"==> Episode {self.episode_id} tactile summary: {tactile_count} items, total sum: {total_tactile_sum:.2f}")
+        
         with open(self.json_path, 'w', encoding='utf-8') as jsonf:
             jsonf.write(json.dumps(self.data, indent=4, ensure_ascii=False))
         self.need_save = False     # Reset the save flag
@@ -216,4 +303,16 @@ class EpisodeWriter():
         while not self.is_available:
             time.sleep(0.01)
         self.stop_worker = True
-        self.worker_thread.join()
+        #self.worker_thread.join()
+        if self.worker_thread is not None:
+            self.worker_thread.join()
+            self.worker_thread = None
+        logger_mp.info("==> Worker thread stopped.")
+
+    def start_worker(self):
+        """Worker thread를 시작 (create_episode 시점에 호출)."""
+        if self.worker_thread is None or not self.worker_thread.is_alive():
+            self.stop_worker = False
+            self.worker_thread = Thread(target=self.process_queue, daemon=True)
+            self.worker_thread.start()
+            logger_mp.info("==> Worker thread started.")

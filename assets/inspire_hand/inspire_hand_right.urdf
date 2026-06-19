@@ -535,8 +535,8 @@
       <geometry>
         <sphere radius="0.005"/>
       </geometry>
-      <material name="white">
-        <color rgba="1 1 1 1" />
+      <material name="yellow">
+        <color rgba="1 1 0 1" />
       </material>
     </visual>
   </link>

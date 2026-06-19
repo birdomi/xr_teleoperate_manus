@@ -6,6 +6,8 @@ from collections import deque
 import numpy as np
 import pyrealsense2 as rs
 import logging_mp
+import pyzed.sl as sl
+
 logger_mp = logging_mp.get_logger(__name__, level=logging_mp.DEBUG)
 
 
@@ -66,6 +68,18 @@ class RealSenseCamera(object):
     def release(self):
         self.pipeline.stop()
 
+def to_bgr3(img):
+    # None 체크
+    if img is None:
+        return None
+    # 그레이스케일 -> BGR
+    if len(img.shape) == 2 or (len(img.shape) == 3 and img.shape[2] == 1):
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    # BGRA(4채널) -> BGR(3채널)
+    if len(img.shape) == 3 and img.shape[2] == 4:
+        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    # 이미 BGR(3채널)이면 그대로
+    return img
 
 class OpenCVCamera():
     def __init__(self, device_id, img_shape, fps):
@@ -98,8 +112,53 @@ class OpenCVCamera():
         ret, color_image = self.cap.read()
         if not ret:
             return None
+        color_image = cv2.flip(color_image, -1)  # 좌우 반전
         return color_image
 
+class ZedCamera():
+    def __init__(self, serial_number, img_shape, fps):
+
+        self.zed = sl.Camera()
+        self.serial_number = serial_number
+        self.img_shape = img_shape
+        self.fps = fps
+
+        self.init_params = sl.InitParameters()
+        #self.init_params.camera_resolution = sl.RESOLUTION.HD720  # 해상도 선택
+        self.init_params.camera_resolution = sl.RESOLUTION.VGA
+        self.init_params.camera_fps = self.fps  # FPS 설정
+        self.init_params.depth_mode = sl.DEPTH_MODE.NONE   # 깊이 모드 선택 (없음, 기본값)
+
+        if not self._can_read_frame():
+            logger_mp.error(f"[Image Server] Camera {self.id} Error: Failed to initialize the camera or read frames. Exiting...")
+            self.release()
+
+
+    def _can_read_frame(self):
+        status = self.zed.open(self.init_params)
+        if status != sl.ERROR_CODE.SUCCESS:
+            print(f"카메라 오픈 실패: {status}")
+
+        return status
+
+    def release(self):
+        self.zed.close()
+
+    def get_frame(self):
+        image_left = sl.Mat()
+        image_right = sl.Mat()
+
+        if self.zed.grab() == sl.ERROR_CODE.SUCCESS:
+            self.zed.retrieve_image(image_left, sl.VIEW.LEFT)
+            self.zed.retrieve_image(image_right, sl.VIEW.RIGHT)
+            left_img = image_left.get_data()
+            right_img = image_right.get_data()
+            color_image = np.concatenate((left_img, right_img), axis=1)
+        else:
+            logger_mp.error("[Image Server] Zed camera frame read is error.")
+            return None
+
+        return color_image
 
 class ImageServer:
     def __init__(self, config, port = 5555, Unit_Test = False):
@@ -151,6 +210,10 @@ class ImageServer:
         self.port = port
         self.Unit_Test = Unit_Test
 
+        # Store original head image dimensions for padding metadata
+        self.original_head_height = self.head_image_shape[0]
+        self.original_head_width = self.head_image_shape[1]
+        self.target_height = 480  # Target height for wrist camera compatibility
 
         # Initialize head cameras
         self.head_cameras = []
@@ -161,6 +224,10 @@ class ImageServer:
         elif self.head_camera_type == 'realsense':
             for serial_number in self.head_camera_id_numbers:
                 camera = RealSenseCamera(img_shape=self.head_image_shape, fps=self.fps, serial_number=serial_number)
+                self.head_cameras.append(camera)
+        elif self.head_camera_type == 'zed':
+            for serial_number in self.head_camera_id_numbers:
+                camera = ZedCamera(serial_number, img_shape=self.head_image_shape, fps=self.fps)
                 self.head_cameras.append(camera)
         else:
             logger_mp.warning(f"[Image Server] Unsupported head_camera_type: {self.head_camera_type}")
@@ -191,6 +258,8 @@ class ImageServer:
             if isinstance(cam, OpenCVCamera):
                 logger_mp.info(f"[Image Server] Head camera {cam.id} resolution: {cam.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)} x {cam.cap.get(cv2.CAP_PROP_FRAME_WIDTH)}")
             elif isinstance(cam, RealSenseCamera):
+                logger_mp.info(f"[Image Server] Head camera {cam.serial_number} resolution: {cam.img_shape[0]} x {cam.img_shape[1]}")
+            elif isinstance(cam, ZedCamera):
                 logger_mp.info(f"[Image Server] Head camera {cam.serial_number} resolution: {cam.img_shape[0]} x {cam.img_shape[1]}")
             else:
                 logger_mp.warning("[Image Server] Unknown camera type in head_cameras.")
@@ -252,10 +321,28 @@ class ImageServer:
                         if color_image is None:
                             logger_mp.error("[Image Server] Head camera frame read is error.")
                             break
+                    elif self.head_camera_type == 'zed':
+                        color_image = cam.get_frame()
+                        if color_image is None:
+                            logger_mp.error("[Image Server] Head camera frame read is error.")
+                            break
+                    color_image = to_bgr3(color_image)  
                     head_frames.append(color_image)
                 if len(head_frames) != len(self.head_cameras):
                     break
                 head_color = cv2.hconcat(head_frames)
+                
+                # Calculate padding info before padding
+                padding_bottom = 0
+                if head_color.shape[0] < self.target_height and self.wrist_cameras:
+                    padding_bottom = self.target_height - head_color.shape[0]
+                    head_color = cv2.copyMakeBorder(
+                        head_color,
+                        0, padding_bottom,   # top=0, bottom=padding_bottom
+                        0, 0,            # left=0, right=0
+                        cv2.BORDER_CONSTANT,
+                        value=(0, 0, 0)  # 검정색 패딩
+                    )
                 
                 if self.wrist_cameras:
                     wrist_frames = []
@@ -288,10 +375,13 @@ class ImageServer:
                 if self.Unit_Test:
                     timestamp = time.time()
                     frame_id = self.frame_count
-                    header = struct.pack('dI', timestamp, frame_id)  # 8-byte double, 4-byte unsigned int
+                    # Add padding metadata to header: timestamp(8), frame_id(4), original_head_height(4), original_head_width(4), padding_bottom(4)
+                    header = struct.pack('dIIII', timestamp, frame_id, self.original_head_height, self.original_head_width, padding_bottom)
                     message = header + jpg_bytes
                 else:
-                    message = jpg_bytes
+                    # Add padding metadata for non-test mode: original_head_height(4), original_head_width(4), padding_bottom(4)
+                    header = struct.pack('III', self.original_head_height, self.original_head_width, padding_bottom)
+                    message = header + jpg_bytes
 
                 self.socket.send(message)
 
@@ -309,12 +399,17 @@ class ImageServer:
 if __name__ == "__main__":
     config = {
         'fps': 30,
+    #    'head_camera_type': 'realsense',
+    #    'head_camera_type': 'zed',
         'head_camera_type': 'opencv',
+        #'head_camera_image_shape': [480, 640],  # Head camera resolution
         'head_camera_image_shape': [480, 1280],  # Head camera resolution
+        #'head_camera_image_shape': [376, 1344],  # Head camera resolution
+        #'head_camera_id_numbers': ["327122073288"],
         'head_camera_id_numbers': [0],
-        'wrist_camera_type': 'opencv',
-        'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-        'wrist_camera_id_numbers': [2, 4],
+        #'wrist_camera_type': 'realsense',
+        #'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
+        #'wrist_camera_id_numbers': ["218622272395", "218722270116"],   
     }
 
     server = ImageServer(config, Unit_Test=False)

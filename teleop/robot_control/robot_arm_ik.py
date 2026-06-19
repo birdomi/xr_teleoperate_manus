@@ -260,6 +260,12 @@ class G1_29_ArmIK:
             # return sol_q, sol_tauff
             return current_lr_arm_motor_q, np.zeros(self.reduced_robot.model.nv)
         
+    def get_tauff(self, q):
+        v = (q - self.init_data) * 0.0
+        tauff = pin.rnea(self.reduced_robot.model, self.reduced_robot.data, q, v, np.zeros(self.reduced_robot.model.nv))
+
+        return tauff
+        
 class G1_23_ArmIK:
     def __init__(self, Unit_Test = False, Visualization = False):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)

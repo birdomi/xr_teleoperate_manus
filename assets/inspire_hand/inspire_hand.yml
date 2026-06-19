@@ -1,5 +1,5 @@
 left:
-  type: DexPilot # or vector
+  type: vector #DexPilot # or vector
   urdf_path: inspire_hand/inspire_hand_left.urdf
 
   # Target refers to the retargeting target, which is the robot hand
@@ -26,12 +26,12 @@ left:
 
   # Scaling factor for vector retargeting only
   # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
-  scaling_factor: 1.20
+  scaling_factor: 1.2
   # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
   low_pass_alpha: 0.2
 
 right:
-  type: DexPilot # or vector
+  type: vector # or vector
   urdf_path: inspire_hand/inspire_hand_right.urdf
 
   # Target refers to the retargeting target, which is the robot hand
@@ -57,6 +57,6 @@ right:
   
   # Scaling factor for vector retargeting only
   # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
-  scaling_factor: 1.20
+  scaling_factor: 1.2
   # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
   low_pass_alpha: 0.2

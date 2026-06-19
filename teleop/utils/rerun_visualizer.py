@@ -7,6 +7,14 @@ import rerun.blueprint as rrb
 from datetime import datetime
 os.environ["RUST_LOG"] = "error"
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+
+import logging_mp
+logger_mp = logging_mp.get_logger(__name__)
+
 class RerunEpisodeReader:
     def __init__(self, task_dir = ".", json_file="data.json"):
         self.task_dir = task_dir
@@ -68,12 +76,11 @@ class RerunEpisodeReader:
                 file_path = os.path.join(dir_path, file_name)
                 if os.path.exists(file_path):
                     pass  # Handle audio data if needed
-        return audio_data
-
 class RerunLogger:
-    def __init__(self, prefix = "", IdxRangeBoundary = 30, memory_limit = None):
+    def __init__(self, prefix = "", IdxRangeBoundary = 30, memory_limit = None, show_tactile=False):
         self.prefix = prefix
         self.IdxRangeBoundary = IdxRangeBoundary
+        self.show_tactile = show_tactile
         rr.init(datetime.now().strftime("Runtime_%Y%m%d_%H%M%S"))
         if memory_limit:
             rr.spawn(memory_limit = memory_limit, hide_welcome_screen = True)
@@ -126,6 +133,24 @@ class RerunLogger:
         #     )
         #     views.append(view)
 
+        if getattr(self, 'show_tactile', True):
+            tactile_plot_paths = [
+                f"{self.prefix}tactiles/left_ee",
+                f"{self.prefix}tactiles/right_ee"
+            ]
+            for plot_path in tactile_plot_paths:
+                view = rrb.Spatial2DView(
+                    origin = plot_path,
+                    time_ranges=[
+                        rrb.VisibleTimeRange(
+                            "idx",
+                            start = rrb.TimeRangeBoundary.cursor_relative(seq = -1),
+                            end = rrb.TimeRangeBoundary.cursor_relative(),
+                        )
+                    ],
+                )
+                views.append(view)
+
         grid = rrb.Grid(contents = views,
                         grid_columns=2,               
                         column_shares=[1, 1],
@@ -135,6 +160,108 @@ class RerunLogger:
         views.append(rr.blueprint.TimePanel(state=rrb.PanelState.Collapsed))
         rr.send_blueprint(grid)
 
+    def _render_tactile_image(self, tactile_vals, hand):
+        finger_names = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
+
+        # logger_mp.info(tactile_vals)
+
+        proximities = []
+        normal_forces = []
+        tangential_us = []
+        tangential_vs = []
+        
+        for i in range(5):
+            # Ensure it is a scalar, as tactile_vals might be a nested array or numpy type
+            normal_force = float(tactile_vals[i * 4])
+            tangential_force = float(tactile_vals[i * 4 + 1])
+            tangential_dir = float(tactile_vals[i * 4 + 2])
+            val = float(tactile_vals[i * 4 + 3])
+            
+            normal_forces.append(normal_force)
+            proximities.append(val)
+            
+            # Compute U, V for quiver plot
+            # Convert direction (0-365) to radians. 
+            # Make 0 degrees point up (12 o'clock, which is +Y in pyplot), 
+            # and positive angles go clockwise (or counter-clockwise depending on convention, assuming clockwise here).
+            # Start at 90 degrees (pi/2) and subtract the angle.
+            if tangential_dir != 65535:
+                theta = np.deg2rad(90 - tangential_dir)
+            else:
+                theta = 0
+                
+            # Scale tangential force so vectors are visibly scaled (adjust 1000.0 as needed)
+            r = tangential_force / 1000.0 if tangential_dir != 65535 else 0
+            tangential_us.append(r * np.cos(theta))
+            tangential_vs.append(r * np.sin(theta))
+        # print(theta, tangential_dir)
+            
+        # Create a white image (400x400, 3 channels)
+        img = np.ones((400, 400, 3), dtype=np.uint8) * 255
+        
+        # Approximate finger tip coordinates (x, y) relative to palm center for RIGHT hand
+        xs = [-1.5, -0.6,  0.0,  0.6,  1.3]
+        
+        # Invert xs for left hand so it looks mirrored (thumb on the right)
+        if 'left' in hand.lower():
+            xs = [-x for x in xs]
+            
+        ys = [ 0.5,  2.0,  2.2,  1.9,  1.2]
+        
+        # Normalize sizes for scatter plot (max area ~ 2000)
+        # Add a minimum size so fingers are always visible
+        sizes = [max(100.0, float((p / 450000.0) * 100.0)) for p in proximities]
+        normal_sizes = [max(0.0, float((n / 25000.0) * 5000.0)) for n in normal_forces]
+        
+        # Add title
+        cv2.putText(img, 'Tactile Info (Blue:Prox, Red:Norm, Grn:Tang)', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+        
+        for i in range(5):
+            # Transform coordinates to image space
+            # x: -2.5 to 2.5 -> 0 to 400
+            # y: -0.5 to 3.5 -> 400 to 0
+            cx = int((xs[i] + 2.5) / 5.0 * 400)
+            cy = int((3.5 - ys[i]) / 4.0 * 400)
+            
+            # Radii for circles from area 's'
+            r_prox = max(1, int(np.sqrt(sizes[i]) * 0.8))
+            r_norm = max(1, int(np.sqrt(normal_sizes[i]) * 0.8))
+            
+            # Draw proximity circles (skyblue: BGR 235, 206, 135)
+            overlay = img.copy()
+            cv2.circle(overlay, (cx, cy), r_prox, (235, 206, 135), -1, cv2.LINE_AA)
+            cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+            
+            # Draw normal force circles (red: BGR 0, 0, 255)
+            overlay = img.copy()
+            cv2.circle(overlay, (cx, cy), r_norm, (0, 0, 255), -1, cv2.LINE_AA)
+            cv2.addWeighted(overlay, 0.9, img, 0.1, 0, img)
+            
+            # Draw small center points for reference ('x' mark)
+            cv2.line(img, (cx-3, cy-3), (cx+3, cy+3), (0, 0, 0), 1, cv2.LINE_AA)
+            cv2.line(img, (cx-3, cy+3), (cx+3, cy-3), (0, 0, 0), 1, cv2.LINE_AA)
+            
+            # Draw tangential force vectors (green arrows)
+            if tangential_us[i] != 0 or tangential_vs[i] != 0:
+                end_x = int((xs[i] + tangential_us[i] + 2.5) / 5.0 * 400)
+                end_y = int((3.5 - (ys[i] + tangential_vs[i])) / 4.0 * 400)
+                cv2.arrowedLine(img, (cx, cy), (end_x, end_y), (0, 128, 0), 2, tipLength=0.2, line_type=cv2.LINE_AA)
+            
+            # Add labels
+            name_size = cv2.getTextSize(finger_names[i], cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+            cv2.putText(img, finger_names[i], (cx - name_size[0]//2, cy + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
+            
+            prox_str = f"{proximities[i]:.0f}"
+            prox_size = cv2.getTextSize(prox_str, cv2.FONT_HERSHEY_SIMPLEX, 0.33, 1)[0]
+            cv2.putText(img, prox_str, (cx - prox_size[0]//2, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (255, 0, 0), 1, cv2.LINE_AA)
+            
+            norm_str = f"{normal_forces[i]:.0f}"
+            norm_size = cv2.getTextSize(norm_str, cv2.FONT_HERSHEY_SIMPLEX, 0.33, 1)[0]
+            cv2.putText(img, norm_str, (cx - norm_size[0]//2, cy - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 0, 255), 1, cv2.LINE_AA)
+            
+        # Convert BGR to RGB (OpenCV uses BGR, we need RGB for rerun)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        return img
 
     def log_item_data(self, item_data: dict):
         rr.set_time_sequence("idx", item_data.get('idx', 0))
@@ -173,6 +300,14 @@ class RerunLogger:
         # for hand, tactile_vals in tactiles.items():
         #     if tactile_vals is not None:
         #         pass # Handle tactile if needed
+
+        # Log tactile if needed
+        if self.show_tactile:
+            tactiles = item_data.get('tactiles', {}) or {}
+            
+            for hand, tactile_vals in tactiles.items():
+                tactile_img = self._render_tactile_image(tactile_vals, hand)
+                rr.log(f"{self.prefix}tactiles/{hand}", rr.Image(tactile_img))
 
         # # Log audios if needed
         # audios = item_data.get('audios', {}) or {}

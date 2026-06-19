@@ -8,6 +8,8 @@ logger_mp = logging_mp.get_logger(__name__)
 class HandType(Enum):
     INSPIRE_HAND = "../assets/inspire_hand/inspire_hand.yml"
     INSPIRE_HAND_Unit_Test = "../../assets/inspire_hand/inspire_hand.yml"
+    INSPIRE_HAND_FTP = "../assets/inspire_hand_ftp/inspire_hand.yml"
+    INSPIRE_HAND_FTP_Unit_Test = "../../assets/inspire_hand_ftp/inspire_hand.yml"
     UNITREE_DEX3 = "../assets/unitree_hand/unitree_dex3.yml"
     UNITREE_DEX3_Unit_Test = "../../assets/unitree_hand/unitree_dex3.yml"
     BRAINCO_HAND = "../assets/brainco_hand/brainco.yml"
@@ -23,13 +25,17 @@ class HandRetargeting:
             RetargetingConfig.set_default_urdf_dir('../assets')
         elif hand_type == HandType.INSPIRE_HAND_Unit_Test:
             RetargetingConfig.set_default_urdf_dir('../../assets')
+        elif hand_type == HandType.INSPIRE_HAND_FTP:
+            RetargetingConfig.set_default_urdf_dir('../assets')
+        elif hand_type == HandType.INSPIRE_HAND_FTP_Unit_Test:
+            RetargetingConfig.set_default_urdf_dir('../../assets')    
         elif hand_type == HandType.BRAINCO_HAND:
             RetargetingConfig.set_default_urdf_dir('../assets')
         elif hand_type == HandType.BRAINCO_HAND_Unit_Test:
             RetargetingConfig.set_default_urdf_dir('../../assets')
 
         config_file_path = Path(hand_type.value)
-
+        
         try:
             with config_file_path.open('r') as f:
                 self.cfg = yaml.safe_load(f)
@@ -66,6 +72,14 @@ class HandRetargeting:
                                                        'R_index_proximal_joint', 'R_thumb_proximal_pitch_joint', 'R_thumb_proximal_yaw_joint' ]
                 self.left_dex_retargeting_to_hardware = [ self.left_retargeting_joint_names.index(name) for name in self.left_inspire_api_joint_names]
                 self.right_dex_retargeting_to_hardware = [ self.right_retargeting_joint_names.index(name) for name in self.right_inspire_api_joint_names]
+            elif hand_type == HandType.INSPIRE_HAND_FTP or hand_type == HandType.INSPIRE_HAND_FTP_Unit_Test:
+                # "Joint Motor Sequence" of https://support.unitree.com/home/en/G1_developer/inspire_dfx_dexterous_hand
+                self.left_inspire_api_joint_names  = [ 'left_little_1_joint', 'left_ring_1_joint', 'left_middle_1_joint',
+                                                       'left_index_1_joint', 'left_thumb_2_joint', 'left_thumb_1_joint' ]
+                self.right_inspire_api_joint_names = [ 'right_little_1_joint', 'right_ring_1_joint', 'right_middle_1_joint',
+                                                       'right_index_1_joint', 'right_thumb_2_joint', 'right_thumb_1_joint' ]
+                self.left_dex_retargeting_to_hardware = [ self.left_retargeting_joint_names.index(name) for name in self.left_inspire_api_joint_names]
+                self.right_dex_retargeting_to_hardware = [ self.right_retargeting_joint_names.index(name) for name in self.right_inspire_api_joint_names]                
             
             elif hand_type == HandType.BRAINCO_HAND or hand_type == HandType.BRAINCO_HAND_Unit_Test:
                 # "Driver Motor ID" of https://www.brainco-hz.com/docs/revolimb-hand/product/parameters.html

@@ -123,6 +123,40 @@ class ImageClient:
             cv2.destroyAllWindows()
         logger_mp.info("Image client has been closed.")
 
+    def _remove_padding_and_split_images(self, full_image, original_head_height, original_head_width, padding_bottom):
+        """
+        Remove padding from head image and split head/wrist images
+        
+        Args:
+            full_image: Complete concatenated image
+            original_head_height: Original height of head camera before padding
+            original_head_width: Original width of head camera
+            padding_bottom: Amount of bottom padding added to head image
+            
+        Returns:
+            head_image: Head camera image with padding removed
+            wrist_image: Wrist cameras image (if exists)
+        """
+        # Calculate head image boundaries
+        head_width = original_head_width
+        head_height_with_padding = full_image.shape[0]  # After padding (480 if wrist cameras exist)
+        
+        # Extract head image with padding
+        head_image_with_padding = full_image[:, :head_width]
+        
+        # Remove bottom padding from head image
+        if padding_bottom > 0:
+            head_image = head_image_with_padding[:original_head_height, :]
+        else:
+            head_image = head_image_with_padding
+            
+        # Extract wrist image if it exists
+        if full_image.shape[1] > head_width:
+            wrist_image = full_image[:, head_width:]
+        else:
+            wrist_image = None
+            
+        return head_image, wrist_image
     
     def receive_process(self):
         # Set up ZeroMQ context and socket
@@ -139,18 +173,26 @@ class ImageClient:
                 receive_time = time.time()
 
                 if self._enable_performance_eval:
-                    header_size = struct.calcsize('dI')
+                    # Unit test mode: timestamp(8) + frame_id(4) + original_head_height(4) + original_head_width(4) + padding_bottom(4)
+                    header_size = struct.calcsize('dIIII')
                     try:
-                        # Attempt to extract header and image data
                         header = message[:header_size]
                         jpg_bytes = message[header_size:]
-                        timestamp, frame_id = struct.unpack('dI', header)
+                        timestamp, frame_id, original_head_height, original_head_width, padding_bottom = struct.unpack('dIIII', header)
                     except struct.error as e:
                         logger_mp.warning(f"[Image Client] Error unpacking header: {e}, discarding message.")
                         continue
                 else:
-                    # No header, entire message is image data
-                    jpg_bytes = message
+                    # Normal mode: original_head_height(4) + original_head_width(4) + padding_bottom(4)
+                    header_size = struct.calcsize('III')
+                    try:
+                        header = message[:header_size]
+                        jpg_bytes = message[header_size:]
+                        original_head_height, original_head_width, padding_bottom = struct.unpack('III', header)
+                    except struct.error as e:
+                        logger_mp.warning(f"[Image Client] Error unpacking header: {e}, discarding message.")
+                        continue
+
                 # Decode image
                 np_img = np.frombuffer(jpg_bytes, dtype=np.uint8)
                 current_image = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
@@ -158,15 +200,40 @@ class ImageClient:
                     logger_mp.warning("[Image Client] Failed to decode image.")
                     continue
 
+                # Remove padding and split images
+                head_image, wrist_image = self._remove_padding_and_split_images(
+                    current_image, original_head_height, original_head_width, padding_bottom
+                )
+
+                # Copy to shared memory arrays
                 if self.tv_enable_shm:
-                    np.copyto(self.tv_img_array, np.array(current_image[:, :self.tv_img_shape[1]]))
+                    # Resize head image to expected tv_img_shape if necessary
+                    if head_image.shape[:2] != self.tv_img_shape[:2]:
+                        head_image_resized = cv2.resize(head_image, (self.tv_img_shape[1], self.tv_img_shape[0]))
+                        np.copyto(self.tv_img_array, head_image_resized)
+                    else:
+                        np.copyto(self.tv_img_array, head_image)
                 
-                if self.wrist_enable_shm:
-                    np.copyto(self.wrist_img_array, np.array(current_image[:, -self.wrist_img_shape[1]:]))
+                if self.wrist_enable_shm and wrist_image is not None:
+                    # Resize wrist image to expected wrist_img_shape if necessary
+                    if wrist_image.shape[:2] != self.wrist_img_shape[:2]:
+                        wrist_image_resized = cv2.resize(wrist_image, (self.wrist_img_shape[1], self.wrist_img_shape[0]))
+                        np.copyto(self.wrist_img_array, wrist_image_resized)
+                    else:
+                        np.copyto(self.wrist_img_array, wrist_image)
                 
                 if self._image_show:
-                    height, width = current_image.shape[:2]
-                    resized_image = cv2.resize(current_image, (width // 2, height // 2))
+                    # Display the original head image without padding
+                    display_image = head_image.copy()
+                    if wrist_image is not None:
+                        # Resize wrist image to match head image height for display
+                        wrist_display = cv2.resize(wrist_image, 
+                                                 (int(wrist_image.shape[1] * head_image.shape[0] / wrist_image.shape[0]), 
+                                                  head_image.shape[0]))
+                        display_image = cv2.hconcat([head_image, wrist_display])
+                    
+                    height, width = display_image.shape[:2]
+                    resized_image = cv2.resize(display_image, (width // 2, height // 2))
                     cv2.imshow('Image Client Stream', resized_image)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         self.running = False
@@ -194,4 +261,5 @@ if __name__ == "__main__":
     # Initialize the client with performance evaluation enabled
     # client = ImageClient(image_show = True, server_address='127.0.0.1', Unit_Test=True) # local test
     client = ImageClient(image_show = True, server_address='192.168.123.164', Unit_Test=False) # deployment test
+    #client = ImageClient(image_show = True, server_address='192.168.123.3', Unit_Test=False) # deployment test
     client.receive_process()
