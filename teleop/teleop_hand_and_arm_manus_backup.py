@@ -41,9 +41,13 @@ _T_ROBOT_TO_LIBSURVIVE = np.block([[_T_ROBOT_TO_LIBSURVIVE, np.zeros((3,1))],
                                     [np.zeros((1,3)),        np.ones((1,1))]])
 
 
-# Wrist correction: tracker device frame  →  Unitree arm IK EE frame.
-# Tracker: X=pinky→thumb, Y=distal(finger ext), Z=palm outward.
-# Post-multiplication maps EE_X=tracker_Y, EE_Y=tracker_Z, EE_Z=tracker_X.
+# Wrist correction: tracker device frame  →  Unitree arm IK EE frame
+# Tracker: X=pinky→thumb, Y=distal(finger ext), Z=palm outward
+# Tune this if the rotation direction is wrong; T_TO_UNITREE_HUMANOID is OpenXR-based
+# Current: same as T_TO_UNITREE (Rx +90° for left, Rx -90° for right)
+# If axes are wrong, adjust here (see diagnostics print below)
+# EE_X = tracker_Y (distal)      → T[:,0] = [0,1,0]
+# EE_X = tracker_Y (distal/pitch axis), EE_Y = tracker_Z (palm/yaw axis), EE_Z = tracker_X (pinky→thumb/roll axis)
 _T_WRIST_CORR_LEFT  = np.array([[0, 0, 1],
                                   [1, 0, 0],
                                   [0, 1, 0]], dtype=float)
@@ -54,23 +58,11 @@ _LEFT_X_FORWARD_FIX = np.array([[-1, 0, 0],
                                 [ 0,-1, 0],
                                 [ 0, 0, 1]], dtype=float)
 
-
-def _tracker_to_ee_correction(side, apply_unitree_arm_orientation=True):
-    """Return one homogeneous tracker-device → arm-EE axis correction per side."""
-    correction = np.eye(4)
-    if apply_unitree_arm_orientation:
-        correction[:3, :3] = _T_WRIST_CORR_LEFT if side == "left" else _T_WRIST_CORR_RIGHT
-    if side == "left":
-        # Preserve the existing left-hand convention by folding its Rz(180°)
-        # fix into the same correction used by sync and runtime tracking.
-        correction[:3, :3] = correction[:3, :3] @ _LEFT_X_FORWARD_FIX
-    return correction
-
 from teleop.robot_control.robot_arm import G1_29_ArmController
 from teleop.robot_control.robot_arm_ik import G1_29_ArmIK 
 from teleop.robot_control.robot_hand_unitree import Dex3_1_Controller, Dex1_1_Gripper_Controller
 from teleop.robot_control.robot_hand_inspire import Inspire_Controller
-# from teleop.robot_control.robot_hand_brainco import Brainco_Controller
+from teleop.robot_control.robot_hand_brainco import Brainco_Controller
 from teleop.image_server.image_client import ImageClient
 from teleop.utils.episode_writer import EpisodeWriter
 
@@ -215,8 +207,13 @@ def _tracker_world_and_sync_pose(tv_wrapper, tracker_pose, side):
     if robot_world_pose is None or not np.all(np.isfinite(robot_world_pose)):
         return None, None
 
-    correction = _tracker_to_ee_correction(side, tv_wrapper.apply_unitree_arm_orientation)
+    correction = np.eye(4)
+    if tv_wrapper.apply_unitree_arm_orientation:
+        correction[:3, :3] = _T_WRIST_CORR_LEFT if side == "left" else _T_WRIST_CORR_RIGHT
     sync_pose = robot_world_pose @ correction
+    if side == "left":
+        sync_pose = sync_pose.copy()
+        sync_pose[:3, :3] = sync_pose[:3, :3] @ _LEFT_X_FORWARD_FIX
     return robot_world_pose, sync_pose
 
 
@@ -650,7 +647,9 @@ class ViveManusTeleopWrapper:
             return self._default_arm_pose(side)
 
         calib_robot = self._calib_robot[side]
-        correction = _tracker_to_ee_correction(side, self.apply_unitree_arm_orientation)
+        correction = np.eye(4)
+        if self.apply_unitree_arm_orientation:
+            correction[:3, :3] = _T_WRIST_CORR_LEFT if side == "left" else _T_WRIST_CORR_RIGHT
 
         # Convert tracker-device axes into the robot hand/EE axes before taking
         # the relative transform, so the initial tracker orientation becomes zero.
@@ -659,6 +658,9 @@ class ViveManusTeleopWrapper:
         relative_tracker = fast_mat_inv(tracker_start) @ tracker_now
 
         arm_pose = calib_robot @ relative_tracker
+        if side == "left":
+            left_relative_rot = _LEFT_X_FORWARD_FIX @ relative_tracker[:3, :3] @ _LEFT_X_FORWARD_FIX
+            arm_pose[:3, :3] = calib_robot[:3, :3] @ left_relative_rot
         # Position: world-frame delta applied directly (bypasses calib_robot_R axis mixing)
         delta_world = robot_world_pose[:3, 3] - self._calib_tracker[side][:3, 3]
         arm_pose[:3, 3] = calib_robot[:3, 3] + delta_world * self.position_scale

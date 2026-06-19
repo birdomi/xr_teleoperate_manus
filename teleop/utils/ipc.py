@@ -3,11 +3,7 @@ import zmq
 import time
 import threading
 import logging_mp
-<<<<<<< HEAD
 logger_mp = logging_mp.get_logger(__name__)
-=======
-logger_mp = logging_mp.getLogger(__name__)
->>>>>>> 7dc9aa1a6edbf4a9f4f887d8ab6fc449ea5135f6
 
 """
 # Client → Server (Request)
@@ -373,8 +369,4 @@ if __name__ == "__main__":
     finally:
         stop_listening()
         client.stop()
-<<<<<<< HEAD
         logger_mp.info("✅ Client exited")
-=======
-        logger_mp.info("✅ Client exited")
->>>>>>> 7dc9aa1a6edbf4a9f4f887d8ab6fc449ea5135f6

@@ -19,10 +19,12 @@ __MACOSX/
 !real_right_hand.jpg
 !wrist_and_ring_mount.png
 !video_cover2.jpg
-teleop/data/
+teleop/data/*
 episode_0*
 .vscode/
 *.pkl
+
+utils/test_data/*
 
 # Keep large local datasets out of Git history.
 teleop/utils/data/**/*.zip

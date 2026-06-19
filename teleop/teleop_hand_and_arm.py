@@ -4,8 +4,8 @@ from multiprocessing import Value, Array, Lock
 import threading
 from enum import Enum
 import logging_mp
-logging_mp.basicConfig(level=logging_mp.INFO)
-logger_mp = logging_mp.getLogger(__name__)
+logging_mp.basic_config(level=logging_mp.INFO)
+logger_mp = logging_mp.get_logger(__name__)
 
 import os
 import sys
