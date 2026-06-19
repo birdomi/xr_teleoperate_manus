@@ -23,3 +23,6 @@ teleop/data/
 episode_0*
 .vscode/
 *.pkl
+
+# Keep large local datasets out of Git history.
+teleop/utils/data/**/*.zip
