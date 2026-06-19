@@ -14,7 +14,7 @@ from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitial
 from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 
 import logging_mp
-logger_mp = logging_mp.get_logger(__name__)
+logger_mp = logging_mp.getLogger(__name__)
 
 
 class SharedMemoryManager:
@@ -121,7 +121,11 @@ class SharedMemoryManager:
 class SimStateSubscriber:
     """Simple sim state subscriber class"""
     
+<<<<<<< HEAD
     def __init__(self, shm_name: str = "sim_state_cmd_data", shm_size: int = 8192):
+=======
+    def __init__(self, shm_name: str = "sim_state_cmd_data", shm_size: int = 4096):
+>>>>>>> 7dc9aa1a6edbf4a9f4f887d8ab6fc449ea5135f6
         """Initialize the subscriber
         
         Args:
@@ -221,13 +225,13 @@ class SimStateSubscriber:
     def is_running(self) -> bool:
         """Check if subscriber is running"""
         return self.running
-    
-    def __del__(self):
-        """Destructor"""
-        self.stop_subscribe()
 
 
+<<<<<<< HEAD
 def start_sim_state_subscribe(shm_name: str = "sim_state_cmd_data", shm_size: int = 8192) -> SimStateSubscriber:
+=======
+def start_sim_state_subscribe(shm_name: str = "sim_state_cmd_data", shm_size: int = 4096) -> SimStateSubscriber:
+>>>>>>> 7dc9aa1a6edbf4a9f4f887d8ab6fc449ea5135f6
     """Start sim state subscribing
     
     Args:
@@ -245,7 +249,7 @@ def start_sim_state_subscribe(shm_name: str = "sim_state_cmd_data", shm_size: in
 # if __name__ == "__main__":
 #     # example usage
 #     logger_mp.info("Starting sim state subscriber...")
-#     ChannelFactoryInitialize(0)
+#     ChannelFactoryInitialize(1) # 0 for real robot, 1 for simulation
 #     # create and start subscriber
 #     subscriber = start_sim_state_subscribe()
     

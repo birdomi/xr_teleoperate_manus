@@ -1,13 +1,11 @@
-import numpy as np
 import time
 import argparse
-import cv2
-from multiprocessing import shared_memory, Value, Array, Lock
+from multiprocessing import Value, Array, Lock
 import threading
 from enum import Enum
 import logging_mp
-logging_mp.basic_config(level=logging_mp.INFO)
-logger_mp = logging_mp.get_logger(__name__)
+logging_mp.basicConfig(level=logging_mp.INFO)
+logger_mp = logging_mp.getLogger(__name__)
 
 import os
 import sys
@@ -122,7 +120,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true', help='Enable Isaac simulation mode')
 
     args = parser.parse_args()
-    logger_mp.info(f"args: {args}")
+    logger_mp.debug(f"args: {args}")
 
     # =========================
     # Camera config & Shared Memory for images
@@ -342,7 +340,7 @@ if __name__ == '__main__':
                     else:
                         logger_mp.error("Failed to create episode. Recording not started.")
                 else:
-                    is_recording = False
+                    RECORD_RUNNING = False
                     recorder.save_episode()
                     if args.sim:
                         publish_reset_category(1, reset_pose_publisher)
@@ -356,16 +354,25 @@ if __name__ == '__main__':
             
                 with right_hand_pos_array.get_lock():
                     right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
-            elif args.ee == "dex1" and args.xr_mode == "controller":
+            elif args.ee == "brainco" and args.input_mode == "controller":
+                with left_gripper_trigger_in.get_lock():
+                    left_gripper_trigger_in.value = tele_data.left_ctrl_triggerValue
+                with left_gripper_squeeze_in.get_lock():
+                    left_gripper_squeeze_in.value = tele_data.left_ctrl_squeezeValue
+                with right_gripper_trigger_in.get_lock():
+                    right_gripper_trigger_in.value = tele_data.right_ctrl_triggerValue
+                with right_gripper_squeeze_in.get_lock():
+                    right_gripper_squeeze_in.value = tele_data.right_ctrl_squeezeValue
+            elif args.ee == "dex1" and args.input_mode == "controller":
                 with left_gripper_value.get_lock():
-                    left_gripper_value.value = tele_data.left_trigger_value
+                    left_gripper_value.value = tele_data.left_ctrl_triggerValue
                 with right_gripper_value.get_lock():
-                    right_gripper_value.value = tele_data.right_trigger_value
-            elif args.ee == "dex1" and args.xr_mode == "hand":
+                    right_gripper_value.value = tele_data.right_ctrl_triggerValue
+            elif args.ee == "dex1" and args.input_mode == "hand":
                 with left_gripper_value.get_lock():
-                    left_gripper_value.value = tele_data.left_pinch_value
+                    left_gripper_value.value = tele_data.left_hand_pinchValue
                 with right_gripper_value.get_lock():
-                    right_gripper_value.value = tele_data.right_pinch_value
+                    right_gripper_value.value = tele_data.right_hand_pinchValue
             else:
                 pass 
                  

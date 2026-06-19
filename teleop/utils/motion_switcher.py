@@ -50,4 +50,8 @@ if __name__ == '__main__':
     time.sleep(5)
     status, result = ms.Exit_Debug_Mode()
     print("Exit debug mode:", status, result)
+<<<<<<< HEAD
     time.sleep(2)
+=======
+    time.sleep(2)
+>>>>>>> 7dc9aa1a6edbf4a9f4f887d8ab6fc449ea5135f6

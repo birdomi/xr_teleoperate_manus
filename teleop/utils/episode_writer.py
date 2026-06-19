@@ -8,7 +8,7 @@ from .rerun_visualizer import RerunLogger
 from queue import Queue, Empty
 from threading import Thread
 import logging_mp
-logger_mp = logging_mp.get_logger(__name__)
+logger_mp = logging_mp.getLogger(__name__)
 
 class EpisodeWriter():
     def __init__(self, task_dir, frequency=30, image_size=[640, 480], rerun_log = True, show_tactile=False):
@@ -17,6 +17,18 @@ class EpisodeWriter():
         """
         logger_mp.info("==> EpisodeWriter initializing...\n")
         self.task_dir = task_dir
+        self.text = {
+            "goal": "Pick up the red cup on the table.",
+            "desc": "task description",
+            "steps":"step1: do this; step2: do that; ...",
+        }
+        if task_goal is not None:
+            self.text['goal'] = task_goal
+        if task_desc is not None:
+            self.text['desc'] = task_desc
+        if task_steps is not None:
+            self.text['steps'] = task_steps
+
         self.frequency = frequency
         self.image_size = image_size
         self.show_tactile = show_tactile
@@ -27,12 +39,10 @@ class EpisodeWriter():
             self.rerun_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit = "300MB", show_tactile = show_tactile)
             logger_mp.info("==> RerunLogger initializing ok.\n")
         
-        self.data = {}
-        self.episode_data = []
         self.item_id = -1
         self.episode_id = -1
         if os.path.exists(self.task_dir):
-            episode_dirs = [episode_dir for episode_dir in os.listdir(self.task_dir) if 'episode_' in episode_dir]
+            episode_dirs = [episode_dir for episode_dir in os.listdir(self.task_dir) if 'episode_' in episode_dir and not episode_dir.endswith('.zip')]
             episode_last = sorted(episode_dirs)[-1] if len(episode_dirs) > 0 else None
             self.episode_id = 0 if episode_last is None else int(episode_last.split('_')[-1])
             logger_mp.info(f"==> task_dir directory already exist, now self.episode_id is:{self.episode_id}\n")
@@ -40,7 +50,6 @@ class EpisodeWriter():
             os.makedirs(self.task_dir)
             logger_mp.info(f"==> episode directory does not exist, now create one.\n")
         self.data_info()
-        self.text_desc()
 
         self.is_available = True  # Indicates whether the class is available for new operations
         # Initialize the queue and worker thread
@@ -52,6 +61,9 @@ class EpisodeWriter():
         self.worker_thread = None
 
         logger_mp.info("==> EpisodeWriter initialized successfully.\n")
+    
+    def is_ready(self):
+        return self.is_available
 
     def data_info(self, version='1.0.0', date=None, author=None):
         self.info = {
@@ -62,7 +74,7 @@ class EpisodeWriter():
                 "depth": {"width":self.image_size[0], "height":self.image_size[1], "fps":self.frequency},
                 "audio": {"sample_rate": 16000, "channels": 1, "format":"PCM", "bits":16},    # PCM_S16
                 "joint_names":{
-                    "left_arm":   ['kLeftShoulderPitch' ,'kLeftShoulderRoll', 'kLeftShoulderYaw', 'kLeftElbow', 'kLeftWristRoll', 'kLeftWristPitch', 'kLeftWristyaw'],
+                    "left_arm":   [],
                     "left_ee":  [],
                     "right_arm":  [],
                     "right_ee": [],
@@ -126,7 +138,6 @@ class EpisodeWriter():
 
         # Reset episode-related data and create necessary directories
         self.item_id = -1
-        self.episode_data = []
         self.episode_id = self.episode_id + 1
         
         self.episode_dir = os.path.join(self.task_dir, f"episode_{str(self.episode_id).zfill(4)}")
@@ -244,7 +255,11 @@ class EpisodeWriter():
                logger_mp.error(f"[EpisodeWriter] Error saving tactile data at idx {idx}: {e}")
 
         # Update episode data
-        self.episode_data.append(item_data)
+        with open(self.json_path, "a", encoding="utf-8") as f:
+            if not self.first_item:
+                f.write(",\n")
+            f.write(json.dumps(item_data, ensure_ascii=False, indent=4))
+            self.first_item = False
 
         # Log data if necessary
         if self.rerun_log:
